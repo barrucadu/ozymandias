@@ -1,22 +1,26 @@
 module Main (main) where
 
+import Data.Foldable (traverse_)
 import Options.Applicative
+import Ozymandias.Podman
 import System.Exit (die)
 
 main :: IO ()
-main = parseArgs >>= runCommand
+main = do
+  args <- parseArgs
+  podman <- initPodman (argsPodmanSocket args)
+  case argsCommand args of
+    DebugArgs ListManagedPods -> debugListPods podman IsManaged
+    DebugArgs ListUnmanagedPods -> debugListPods podman IsNotManaged
+    _ -> print args >> die "unimplemented"
   where
     parseArgs =
       customExecParser
         (prefs showHelpOnEmpty)
         ( info
-            (args <**> helper)
+            (parser <**> helper)
             (fullDesc <> progDesc "A decentralised container scheduler")
         )
-
-    runCommand cmd = do
-      print cmd
-      die "unimplemented"
 
 -------------------------------------------------------------------------------
 
@@ -36,8 +40,8 @@ data DebugArgs
   | DestroyPod String
   deriving (Show)
 
-args :: Parser Args
-args =
+parser :: Parser Args
+parser =
   Args
     <$> commands
       [ ("debug", "Debugging commands", debugArgs)
@@ -56,3 +60,12 @@ args =
     opt sname lname mvar htext = strOption $ short sname <> long lname <> metavar mvar <> help htext
 
     commands = hsubparser . mconcat . map (\(name, desc, cmd) -> command name (cmd `info` progDesc desc))
+
+-------------------------------------------------------------------------------
+
+debugListPods :: Podman -> IsManaged -> IO ()
+debugListPods podman isManaged = do
+  pods <- filter (\p -> podIsManaged p == isManaged) <$> getAllPods podman
+  if null pods
+    then putStrLn "No pods."
+    else traverse_ print pods
