@@ -1,0 +1,28 @@
+name: Run tests
+
+on: pull_request
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: haskell/actions/setup@v1
+        with: { enable-stack: true }
+      - name: Format
+        uses: mrkkrp/ormolu-action@v2
+      - name: Lint
+        run: |
+          set -ex
+          stack --no-terminal install hlint
+          stack --no-terminal exec hlint src
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: haskell/actions/setup@v1
+        with: { ghc-version: "9.0" }
+      - name: Build
+        run: |
+          cabal build

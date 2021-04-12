@@ -1,0 +1,22 @@
+cabal-version:      2.4
+name:               ozymandias
+version:            0.0.0.0
+synopsis:           A decentralised container scheduler
+homepage:           https://github.com/barrucadu/ozymandias
+license:            MIT
+license-file:       LICENSE
+author:             Michael Walker
+maintainer:         mike@barrucadu.co.uk
+
+library
+    exposed-modules:  MyLib
+    build-depends:    base ^>=4.15.0.0
+    hs-source-dirs:   src/lib
+    default-language: Haskell2010
+
+executable ozymandias
+    main-is:          Main.hs
+    build-depends:    base ^>=4.15.0.0
+                    , ozymandias
+    hs-source-dirs:   src/bin
+    default-language: Haskell2010
