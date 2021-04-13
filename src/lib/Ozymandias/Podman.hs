@@ -14,6 +14,7 @@ module Ozymandias.Podman
   )
 where
 
+import Control.Exception (catch)
 import Data.Aeson
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.HashMap.Strict as M
@@ -22,6 +23,7 @@ import Network.HTTP.Client
 import Network.HTTP.Types (hAccept)
 import qualified Network.Socket as S
 import qualified Network.Socket.ByteString as SBS
+import Ozymandias.Problem
 
 -------------------------------------------------------------------------------
 
@@ -68,17 +70,24 @@ data IsManaged = IsNotManaged | IsManaged
 -------------------------------------------------------------------------------
 
 -- | List all pods, managed and unmanaged.
-getAllPods :: Podman -> IO [Pod]
-getAllPods podman = decodeWithError . responseBody <$> podmanApiRequest podman "/v3.0.0/libpod/pods/json"
+getAllPods :: Podman -> IO (Either Problem [Pod])
+getAllPods = podmanApiRequestJSON "/v3.0.0/libpod/pods/json"
 
 -------------------------------------------------------------------------------
 
--- | A request to the Podman API
-podmanApiRequest :: Podman -> String -> IO (Response BL.ByteString)
-podmanApiRequest (Podman manager) uriPath =
-  let req = parseRequest_ ("http://127.0.0.1" <> uriPath)
-   in httpLbs req {requestHeaders = (hAccept, "application/json") : requestHeaders req} manager
+-- | Make a request to the Podman API.
+podmanApiRequest :: String -> Podman -> IO (Either Problem (Response BL.ByteString))
+podmanApiRequest uriPath (Podman manager) = (Right <$> doRequest) `catch` (pure . Left . PodmanHttpError)
+  where
+    doRequest = do
+      req <- parseUrlThrow ("http://127.0.0.1" <> uriPath)
+      httpLbs req {requestHeaders = (hAccept, "application/json") : requestHeaders req} manager
 
--- | Decode JSON, and throw an error if it can't be decoded.
-decodeWithError :: FromJSON a => BL.ByteString -> a
-decodeWithError = either error id . eitherDecode
+-- | Make a request to the Podman API and decode it as JSON.
+podmanApiRequestJSON :: FromJSON a => String -> Podman -> IO (Either Problem a)
+podmanApiRequestJSON uriPath podman = decodeJson <$> podmanApiRequest uriPath podman
+  where
+    decodeJson (Right resp) = case eitherDecode (responseBody resp) of
+      Right a -> Right a
+      Left err -> Left (PodmanJsonError err)
+    decodeJson (Left err) = Left err

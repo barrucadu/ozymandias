@@ -1,8 +1,13 @@
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
+
 module Main (main) where
 
 import Data.Foldable (traverse_)
+import Data.Text (unpack)
 import Options.Applicative
 import Ozymandias.Podman
+import Ozymandias.Problem
 import System.Exit (die)
 
 main :: IO ()
@@ -64,8 +69,26 @@ parser =
 -------------------------------------------------------------------------------
 
 debugListPods :: Podman -> IsManaged -> IO ()
-debugListPods podman isManaged = do
-  pods <- filter (\p -> podIsManaged p == isManaged) <$> getAllPods podman
-  if null pods
-    then putStrLn "No pods."
-    else traverse_ print pods
+debugListPods podman isManaged =
+  getAllPods podman >>= \case
+    Right allPods ->
+      let pods = filter (\p -> podIsManaged p == isManaged) allPods
+       in if null pods
+            then putStrLn "No pods."
+            else traverse_ print pods
+    Left err -> die (formatProblem err)
+
+-- | Pretty-print a problem.
+formatProblem :: Problem -> String
+formatProblem err =
+  unlines . map unpack $
+    [ "ERROR: " <> problemTitle doc,
+      "",
+      problemDetail doc
+    ]
+      ++ concatMap (\(n, v) -> ["", n <> ": " <> v]) (problemExtraDetails doc)
+      ++ [ "",
+           "For further information, see " <> problemType doc
+         ]
+  where
+    doc = toProblemDocument err
