@@ -7,7 +7,7 @@ import qualified Data.Aeson as A
 import Data.Foldable (traverse_)
 import Data.Text (unpack)
 import Options.Applicative
-import Ozymandias.Job (JobSpec)
+import Ozymandias.Job
 import Ozymandias.Podman
 import Ozymandias.Problem
 import System.Exit (die)
@@ -86,7 +86,9 @@ debugListPods podman isManaged =
 debugParseJobDefinition :: FilePath -> IO ()
 debugParseJobDefinition fp =
   A.eitherDecodeFileStrict fp >>= \case
-    Right jobspec -> print (jobspec :: JobSpec)
+    Right jobspec -> case normaliseJobSpec jobspec of
+      Right njobspec -> print njobspec
+      Left err -> die (formatProblem err)
     Left err -> die (formatError "Could not parse JSON" err)
 
 -------------------------------------------------------------------------------

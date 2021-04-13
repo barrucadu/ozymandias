@@ -15,6 +15,21 @@ There may be additional fields named `detail_KEY`.
 
 [problem details object]: https://tools.ietf.org/html/rfc7807
 
+## Job has unsatisfiable dependencies
+
+A job configuration has containers with dependencies which either form
+a loop, or which reference undefined containers.
+
+**This could be caused by:**
+
+- an error in your job configuration
+- a bug in Ozymandias
+
+**Before reporting an issue:**
+
+Check that you don't have any typos or loops in your container
+`depends` specifications.
+
 ## Podman request returned invalid JSON
 
 Podman returned a successful response but with an unexpected response

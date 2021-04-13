@@ -7,18 +7,25 @@ module Ozymandias.Job
     PortMappingSpec (..),
     RestartPolicySpec (..),
     PortProtocolSpec (..),
+
+    -- * Normalised job specifications
+    NormalisedJobSpec,
+    normalisedJobSpecToJobSpec,
+    normalisedJobSpecToLaunchOrder,
+    normaliseJobSpec,
   )
 where
 
 import Data.Aeson
 import qualified Data.HashMap.Strict as M
-import Data.List (stripPrefix)
+import Data.List (partition, sortOn, stripPrefix)
 import Data.List.NonEmpty (NonEmpty)
-import Data.Maybe (fromJust)
+import Data.Maybe (fromJust, fromMaybe)
 import Data.Text (Text)
 import Data.Word (Word16)
 import GHC.Generics
 import Numeric.Natural (Natural)
+import Ozymandias.Problem
 
 -- | A specification of a job to run.
 data JobSpec = JobSpec
@@ -109,6 +116,44 @@ instance ToJSON PortProtocolSpec where
 
 instance FromJSON PortProtocolSpec where
   parseJSON = genericParseJSON jsonOptions'
+
+-------------------------------------------------------------------------------
+
+-- | A normalised @JobSpec@ has had all the @containerspecDepends@
+-- validated: all dependencies are in the pod, and there is an order
+-- to launch the containers which meets all of the dependencies.
+data NormalisedJobSpec = NormalisedJobSpec
+  { normalisedJobSpec :: JobSpec,
+    normalisedContainerLaunchOrder :: [[Text]]
+  }
+  deriving (Show)
+
+-- | Get the @JobSpec@ from a @NormalisedJobSpec@.
+normalisedJobSpecToJobSpec :: NormalisedJobSpec -> JobSpec
+normalisedJobSpecToJobSpec = normalisedJobSpec
+
+-- | Get the launch order from a @NormalisedJobSpec@.
+normalisedJobSpecToLaunchOrder :: NormalisedJobSpec -> [[Text]]
+normalisedJobSpecToLaunchOrder = normalisedContainerLaunchOrder
+
+-- | Validate the @containerspecDepends@ of a @JobSpec@ and compute a
+-- container launch order.
+normaliseJobSpec :: JobSpec -> Either Problem NormalisedJobSpec
+normaliseJobSpec jobspec = go [] . sortOn (length . deps) . M.toList $ jobspecContainers jobspec
+  where
+    go launcho [] =
+      Right
+        NormalisedJobSpec
+          { normalisedJobSpec = jobspec,
+            normalisedContainerLaunchOrder = reverse launcho
+          }
+    go launcho todo =
+      let (launcho', todo') = partition (all (\d -> any (d `elem`) launcho) . deps) todo
+       in if null launcho'
+            then Left (JobDependencyError (reverse launcho) (map fst todo))
+            else go (map fst launcho' : launcho) todo'
+
+    deps = fromMaybe [] . containerspecDepends . snd
 
 -------------------------------------------------------------------------------
 

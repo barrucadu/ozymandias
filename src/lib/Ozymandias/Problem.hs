@@ -3,13 +3,14 @@
 module Ozymandias.Problem where
 
 import Data.Aeson
-import Data.Text (Text, pack)
+import Data.Text (Text, intercalate, pack)
 import qualified Network.HTTP.Client as HTTP
 
 -- | All the problems that can arise.
 data Problem
-  = PodmanJsonError {jsonError :: String}
-  | PodmanHttpError {httpError :: HTTP.HttpException}
+  = PodmanJsonError String
+  | PodmanHttpError HTTP.HttpException
+  | JobDependencyError [[Text]] [Text]
   deriving (Show)
 
 instance ToJSON Problem where
@@ -59,6 +60,13 @@ toProblemDocument (PodmanHttpError (HTTP.InvalidUrlException url err)) =
       problemTitle = "Invalid URL",
       problemDetail = pack err,
       problemExtraDetails = [("url", pack url)]
+    }
+toProblemDocument (JobDependencyError solved unsolved) =
+  ProblemDocument
+    { problemType = problemTypeBaseURL <> "#job-has-unsatisfiable-dependencies",
+      problemTitle = "Job has unsatisfiable dependencies",
+      problemDetail = "Could not compute a launch order for containers: " <> intercalate ", " unsolved,
+      problemExtraDetails = [("launch_order", intercalate "; " (map (intercalate ", ") solved))]
     }
 
 -- | Base URL for problem type help text
