@@ -3,9 +3,11 @@
 
 module Main (main) where
 
+import qualified Data.Aeson as A
 import Data.Foldable (traverse_)
 import Data.Text (unpack)
 import Options.Applicative
+import Ozymandias.Job (JobSpec)
 import Ozymandias.Podman
 import Ozymandias.Problem
 import System.Exit (die)
@@ -17,6 +19,7 @@ main = do
   case argsCommand args of
     DebugArgs ListManagedPods -> debugListPods podman IsManaged
     DebugArgs ListUnmanagedPods -> debugListPods podman IsNotManaged
+    DebugArgs (ParseJobDefinition fp) -> debugParseJobDefinition fp
     _ -> print args >> die "unimplemented"
   where
     parseArgs =
@@ -41,6 +44,7 @@ newtype CommandArgs = DebugArgs DebugArgs
 data DebugArgs
   = ListManagedPods
   | ListUnmanagedPods
+  | ParseJobDefinition FilePath
   | CreatePod FilePath
   | DestroyPod String
   deriving (Show)
@@ -58,7 +62,8 @@ parser =
         <$> commands
           [ ("list-managed-pods", "List running pods managed by the cluster", pure ListManagedPods),
             ("list-unmanaged-pods", "List running pods not managed by the cluster", pure ListUnmanagedPods),
-            ("create-pod", "Create a pod from a configuration file", CreatePod <$> opt 'c' "config-file" "FILE" "Path to pod configuration file"),
+            ("parse-job-definition", "Read and dump a job configuration file", ParseJobDefinition <$> opt 'c' "config-file" "FILE" "Path to job configuration file"),
+            ("create-pod-from-job", "Create a pod from a job configuration file", CreatePod <$> opt 'c' "config-file" "FILE" "Path to job configuration file"),
             ("destroy-pod", "Kill and delete a running pod", DestroyPod <$> opt 'p' "pod" "POD" "Identifier of the pod")
           ]
 
@@ -78,6 +83,14 @@ debugListPods podman isManaged =
             else traverse_ print pods
     Left err -> die (formatProblem err)
 
+debugParseJobDefinition :: FilePath -> IO ()
+debugParseJobDefinition fp =
+  A.eitherDecodeFileStrict fp >>= \case
+    Right jobspec -> print (jobspec :: JobSpec)
+    Left err -> die (formatError "Could not parse JSON" err)
+
+-------------------------------------------------------------------------------
+
 -- | Pretty-print a problem.
 formatProblem :: Problem -> String
 formatProblem err =
@@ -92,3 +105,12 @@ formatProblem err =
          ]
   where
     doc = toProblemDocument err
+
+-- | Pretty-print an error
+formatError :: String -> String -> String
+formatError title detail =
+  unlines
+    [ "ERROR: " <> title,
+      "",
+      detail
+    ]

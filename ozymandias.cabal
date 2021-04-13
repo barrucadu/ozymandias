@@ -9,7 +9,8 @@ author:             Michael Walker
 maintainer:         mike@barrucadu.co.uk
 
 library
-    exposed-modules:  Ozymandias.Podman
+    exposed-modules:  Ozymandias.Job
+                    , Ozymandias.Podman
                     , Ozymandias.Problem
     build-depends:    base ^>=4.15.0.0
                     , aeson ^>=1.5.6.0
@@ -26,6 +27,7 @@ library
 executable ozymandias
     main-is:          Main.hs
     build-depends:    base ^>=4.15.0.0
+                    , aeson
                     , optparse-applicative ^>=0.16.1.0
                     , ozymandias
                     , text
