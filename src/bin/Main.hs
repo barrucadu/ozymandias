@@ -20,6 +20,7 @@ main = do
     DebugArgs ListManagedPods -> debugListPods podman IsManaged
     DebugArgs ListUnmanagedPods -> debugListPods podman IsNotManaged
     DebugArgs (ParseJobDefinition fp) -> debugParseJobDefinition fp
+    DebugArgs (CreatePodFromJob fp) -> debugCreatePodFromJob podman fp
     _ -> print args >> die "unimplemented"
   where
     parseArgs =
@@ -45,7 +46,7 @@ data DebugArgs
   = ListManagedPods
   | ListUnmanagedPods
   | ParseJobDefinition FilePath
-  | CreatePod FilePath
+  | CreatePodFromJob FilePath
   | DestroyPod String
   deriving (Show)
 
@@ -63,7 +64,7 @@ parser =
           [ ("list-managed-pods", "List running pods managed by the cluster", pure ListManagedPods),
             ("list-unmanaged-pods", "List running pods not managed by the cluster", pure ListUnmanagedPods),
             ("parse-job-definition", "Read and dump a job configuration file", ParseJobDefinition <$> opt 'c' "config-file" "FILE" "Path to job configuration file"),
-            ("create-pod-from-job", "Create a pod from a job configuration file", CreatePod <$> opt 'c' "config-file" "FILE" "Path to job configuration file"),
+            ("create-pod-from-job", "Create a pod from a job configuration file", CreatePodFromJob <$> opt 'c' "config-file" "FILE" "Path to job configuration file"),
             ("destroy-pod", "Kill and delete a running pod", DestroyPod <$> opt 'p' "pod" "POD" "Identifier of the pod")
           ]
 
@@ -88,6 +89,17 @@ debugParseJobDefinition fp =
   A.eitherDecodeFileStrict fp >>= \case
     Right jobspec -> case normaliseJobSpec jobspec of
       Right njobspec -> print njobspec
+      Left err -> die (formatProblem err)
+    Left err -> die (formatError "Could not parse JSON" err)
+
+debugCreatePodFromJob :: Podman -> FilePath -> IO ()
+debugCreatePodFromJob podman fp =
+  A.eitherDecodeFileStrict fp >>= \case
+    Right jobspec -> case normaliseJobSpec jobspec of
+      Right njobspec ->
+        createAndLaunchPod podman njobspec >>= \case
+          Right pod -> print pod
+          Left err -> die (formatProblem err)
       Left err -> die (formatProblem err)
     Left err -> die (formatError "Could not parse JSON" err)
 
