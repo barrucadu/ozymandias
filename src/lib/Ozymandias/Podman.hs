@@ -21,8 +21,9 @@ import Control.Monad (void)
 import Data.Aeson
 import qualified Data.ByteString.Lazy as BL
 import Data.Char (toLower)
+import Data.Foldable (traverse_)
 import qualified Data.HashMap.Strict as M
-import Data.List (intercalate)
+import Data.List (intercalate, nub)
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Text (Text, unpack)
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
@@ -88,28 +89,24 @@ data IsManaged = IsNotManaged | IsManaged
 -- | Create a pod and launch containers inside it.
 createAndLaunchPod :: NormalisedJobSpec -> Podman -> Oz IdObj
 createAndLaunchPod njobspec podman = do
+  pullImages . map containerspecImage . M.elems $ jobspecContainers jobspec
   pod <- createPod jobspec podman
   launchContainers pod (normalisedJobSpecToLaunchOrder njobspec)
+  pure pod
   where
     jobspec = normalisedJobSpecToJobSpec njobspec
 
-    launchContainers :: IdObj -> [[Text]] -> Oz IdObj
-    launchContainers pod = go
-      where
-        go [] = pure pod
-        go (cs : css) = launchContainersInGroup pod cs >> go css
+    pullImages :: [Text] -> Oz ()
+    pullImages = void . mapConcurrently (`pullImage` podman) . nub
 
-    launchContainersInGroup :: IdObj -> [Text] -> Oz ()
-    launchContainersInGroup pod = go
+    launchContainers :: IdObj -> [[Text]] -> Oz ()
+    launchContainers pod = traverse_ (mapConcurrently go)
       where
-        go [] = pure ()
-        go (c : cs) = do
+        go c = do
           let container = jobspecContainers jobspec M.! c
-          pullImage (containerspecImage container) podman
           cid <- createContainer pod container podman
           initContainer cid podman
           startContainer cid podman
-          go cs
 
 -- | Kill and delete a pod and all its containers.
 destroyPod :: IdObj -> Podman -> Oz ()

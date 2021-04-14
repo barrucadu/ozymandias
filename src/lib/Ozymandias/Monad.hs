@@ -6,15 +6,18 @@ module Ozymandias.Monad
     runOz,
     problem,
     catch,
+    mapConcurrently,
 
     -- * Re-exports
     liftIO,
   )
 where
 
+import qualified Control.Concurrent.Async as A
 import qualified Control.Exception as E
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Except
+import Data.Either
 import Ozymandias.Problem
 
 -- | A type for actions which have effects and might fail with a
@@ -33,3 +36,12 @@ problem = Oz . throwE
 -- | Catch an @IO@ exception
 catch :: E.Exception e => Oz a -> (e -> Oz a) -> Oz a
 catch ma handler = Oz . ExceptT $ runOz ma `E.catch` (runOz . handler)
+
+-- | Run some @Oz@ actions concurrently.  If any fail, return the
+-- first 'Problem'.
+mapConcurrently :: (a -> Oz b) -> [a] -> Oz [b]
+mapConcurrently f mas = do
+  results <- liftIO $ A.mapConcurrently (runOz . f) mas
+  case partitionEithers results of
+    (err : _, _) -> problem err
+    (_, bs) -> pure bs
