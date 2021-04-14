@@ -30,6 +30,52 @@ a loop, or which reference undefined containers.
 Check that you don't have any typos or loops in your container
 `depends` specifications.
 
+## etcd request returned invalid JSON
+
+etcd returned a successful response but with an unexpected response
+body.
+
+**This could be caused by:**
+
+- an API incompatibility
+- a bug in Ozymandias
+- a bug in etcd
+
+**Before reporting an issue:**
+
+Check you have the latest version of Ozymandias and etcd, and that
+etcd is working.
+
+## etcd request raised an HTTP error
+
+etcd returned an unexpected response.
+
+**This could be caused by:**
+
+- an API incompatibility
+- a bug in Ozymandias
+- a bug in etcd
+
+**Before reporting an issue:**
+
+Check you have the latest version of Ozymandias and etcd, and that
+etcd is working.
+
+## etcd key not found
+
+A key which was expected to exist in etcd does not.
+
+**This could be caused by:**
+
+- an API incompatibility
+- a bug in Ozymandias
+- a bug in etcd
+
+**Before reporting an issue:**
+
+Check you have the latest version of Ozymandias and etcd, and that
+etcd is working.
+
 ## Podman request returned invalid JSON
 
 Podman returned a successful response but with an unexpected response

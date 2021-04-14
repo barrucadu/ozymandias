@@ -8,7 +8,10 @@ import qualified Network.HTTP.Client as HTTP
 
 -- | All the problems that can arise.
 data Problem
-  = PodmanJsonError String
+  = EtcdJsonError String
+  | EtcdHttpError HTTP.HttpException
+  | EtcdKeyNotFoundError Text
+  | PodmanJsonError String
   | PodmanHttpError HTTP.HttpException
   | JobDependencyError [[Text]] [Text]
   deriving (Show)
@@ -40,6 +43,34 @@ instance ToJSON ProblemDocument where
 
 -- | Convert a @Problem@ into a @ProblemDocument@.
 toProblemDocument :: Problem -> ProblemDocument
+toProblemDocument (EtcdJsonError err) =
+  ProblemDocument
+    { problemType = problemTypeBaseURL <> "#etcd-request-returned-invalid-json",
+      problemTitle = "etcd request returned invalid JSON",
+      problemDetail = pack err,
+      problemExtraDetails = []
+    }
+toProblemDocument (EtcdHttpError (HTTP.HttpExceptionRequest req err)) =
+  ProblemDocument
+    { problemType = problemTypeBaseURL <> "#etcd-request-raised-an-http-error",
+      problemTitle = "etcd request raised an HTTP error",
+      problemDetail = pack (show err),
+      problemExtraDetails = [("request", pack (show req))]
+    }
+toProblemDocument (EtcdHttpError (HTTP.InvalidUrlException url err)) =
+  ProblemDocument
+    { problemType = problemTypeBaseURL <> "#invalid-url",
+      problemTitle = "Invalid URL",
+      problemDetail = pack err,
+      problemExtraDetails = [("url", pack url)]
+    }
+toProblemDocument (EtcdKeyNotFoundError key) =
+  ProblemDocument
+    { problemType = problemTypeBaseURL <> "#etcd-key-not-found",
+      problemTitle = "etcd key not found",
+      problemDetail = "A key which is supposed to have a value is not set.",
+      problemExtraDetails = [("key", key)]
+    }
 toProblemDocument (PodmanJsonError err) =
   ProblemDocument
     { problemType = problemTypeBaseURL <> "#podman-request-returned-invalid-json",
