@@ -12,6 +12,7 @@ module Ozymandias.Podman
 
     -- * Interacting with Podman
     createAndLaunchPod,
+    destroyPod,
     getAllPods,
   )
 where
@@ -85,8 +86,8 @@ data IsManaged = IsNotManaged | IsManaged
 -------------------------------------------------------------------------------
 
 -- | Create a pod and launch containers inside it.
-createAndLaunchPod :: Podman -> NormalisedJobSpec -> Oz IdObj
-createAndLaunchPod podman njobspec = do
+createAndLaunchPod :: NormalisedJobSpec -> Podman -> Oz IdObj
+createAndLaunchPod njobspec podman = do
   pod <- createPod jobspec podman
   launchContainers pod (normalisedJobSpecToLaunchOrder njobspec)
   where
@@ -109,6 +110,12 @@ createAndLaunchPod podman njobspec = do
           initContainer cid podman
           startContainer cid podman
           go cs
+
+-- | Kill and delete a pod and all its containers.
+destroyPod :: IdObj -> Podman -> Oz ()
+destroyPod (IdObj pid) = void . podmanApiRequest' methodDelete uriPath Nothing
+  where
+    uriPath = "/v3.0.0/libpod/pods/" <> unpack pid <> "?force=true"
 
 -- | List all pods, managed and unmanaged.
 getAllPods :: Podman -> Oz [Pod]

@@ -5,7 +5,7 @@ module Main (main) where
 
 import qualified Data.Aeson as A
 import Data.Foldable (traverse_)
-import Data.Text (unpack)
+import Data.Text (pack, unpack)
 import Options.Applicative
 import Ozymandias.Job
 import Ozymandias.Monad
@@ -22,7 +22,7 @@ main = do
     DebugArgs ListUnmanagedPods -> debugListPods podman IsNotManaged
     DebugArgs (ParseJobDefinition fp) -> debugParseJobDefinition fp
     DebugArgs (CreatePodFromJob fp) -> debugCreatePodFromJob podman fp
-    _ -> print args >> die "unimplemented"
+    DebugArgs (DestroyPod pid) -> debugDestroyPod podman pid
   where
     parseArgs =
       customExecParser
@@ -98,11 +98,17 @@ debugCreatePodFromJob podman fp =
   A.eitherDecodeFileStrict fp >>= \case
     Right jobspec -> case normaliseJobSpec jobspec of
       Right njobspec ->
-        runOz (createAndLaunchPod podman njobspec) >>= \case
+        runOz (createAndLaunchPod njobspec podman) >>= \case
           Right pod -> print pod
           Left err -> die (formatProblem err)
       Left err -> die (formatProblem err)
     Left err -> die (formatError "Could not parse JSON" err)
+
+debugDestroyPod :: Podman -> String -> IO ()
+debugDestroyPod podman pid =
+  runOz (destroyPod (IdObj (pack pid)) podman) >>= \case
+    Right () -> putStrLn ("Pod " <> pid <> " destroyed.")
+    Left err -> die (formatProblem err)
 
 -------------------------------------------------------------------------------
 
