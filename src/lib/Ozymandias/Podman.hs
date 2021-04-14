@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Ozymandias.Podman
@@ -17,7 +16,6 @@ module Ozymandias.Podman
   )
 where
 
-import Control.Exception (catch)
 import Control.Monad (void)
 import Data.Aeson
 import qualified Data.ByteString.Lazy as BL
@@ -32,6 +30,7 @@ import Network.HTTP.Types
 import qualified Network.Socket as S
 import qualified Network.Socket.ByteString as SBS
 import Ozymandias.Job
+import Ozymandias.Monad
 import Ozymandias.Problem
 
 -------------------------------------------------------------------------------
@@ -86,44 +85,33 @@ data IsManaged = IsNotManaged | IsManaged
 -------------------------------------------------------------------------------
 
 -- | Create a pod and launch containers inside it.
-createAndLaunchPod :: Podman -> NormalisedJobSpec -> IO (Either Problem IdObj)
-createAndLaunchPod podman njobspec =
-  createPod jobspec podman >>= \case
-    Right pod -> launchContainers pod (normalisedJobSpecToLaunchOrder njobspec)
-    Left err -> pure (Left err)
+createAndLaunchPod :: Podman -> NormalisedJobSpec -> Oz IdObj
+createAndLaunchPod podman njobspec = do
+  pod <- createPod jobspec podman
+  launchContainers pod (normalisedJobSpecToLaunchOrder njobspec)
   where
     jobspec = normalisedJobSpecToJobSpec njobspec
 
-    launchContainers :: IdObj -> [[Text]] -> IO (Either Problem IdObj)
+    launchContainers :: IdObj -> [[Text]] -> Oz IdObj
     launchContainers pod = go
       where
-        go [] = pure (Right pod)
-        go (cs : css) =
-          launchContainersInGroup pod cs >>= \case
-            Right () -> go css
-            Left err -> pure (Left err)
+        go [] = pure pod
+        go (cs : css) = launchContainersInGroup pod cs >> go css
 
-    launchContainersInGroup :: IdObj -> [Text] -> IO (Either Problem ())
+    launchContainersInGroup :: IdObj -> [Text] -> Oz ()
     launchContainersInGroup pod = go
       where
-        go [] = pure (Right ())
-        go (c : cs) =
-          let container = (jobspecContainers jobspec M.! c)
-           in pullImage (containerspecImage container) podman >>= \case
-                Right _ ->
-                  createContainer pod container podman >>= \case
-                    Right cid ->
-                      initContainer cid podman >>= \case
-                        Right _ ->
-                          startContainer cid podman >>= \case
-                            Right _ -> go cs
-                            Left err -> pure (Left err)
-                        Left err -> pure (Left err)
-                    Left err -> pure (Left err)
-                Left err -> pure (Left err)
+        go [] = pure ()
+        go (c : cs) = do
+          let container = jobspecContainers jobspec M.! c
+          pullImage (containerspecImage container) podman
+          cid <- createContainer pod container podman
+          initContainer cid podman
+          startContainer cid podman
+          go cs
 
 -- | List all pods, managed and unmanaged.
-getAllPods :: Podman -> IO (Either Problem [Pod])
+getAllPods :: Podman -> Oz [Pod]
 getAllPods = podmanApiRequest methodGet "/v3.0.0/libpod/pods/json" Nothing
 
 -------------------------------------------------------------------------------
@@ -131,7 +119,7 @@ getAllPods = podmanApiRequest methodGet "/v3.0.0/libpod/pods/json" Nothing
 -- Lower-level podman operations used by the functions above.
 
 -- | Create a pod, but not any of its containers.
-createPod :: JobSpec -> Podman -> IO (Either Problem IdObj)
+createPod :: JobSpec -> Podman -> Oz IdObj
 createPod jobspec = podmanApiRequest methodPost "/v3.0.0/libpod/pods/create" (Just j)
   where
     j =
@@ -149,13 +137,13 @@ createPod jobspec = podmanApiRequest methodPost "/v3.0.0/libpod/pods/create" (Ju
         ]
 
 -- | Pull an image from a registry.
-pullImage :: Text -> Podman -> IO (Either Problem ())
-pullImage image = fmap void . podmanApiRequest' methodPost uriPath Nothing
+pullImage :: Text -> Podman -> Oz ()
+pullImage image = void . podmanApiRequest' methodPost uriPath Nothing
   where
     uriPath = unpack . decodeUtf8 $ "/v3.0.0/libpod/images/pull?reference=" <> urlEncode True (encodeUtf8 image)
 
 -- | Create, but do not start, a container.
-createContainer :: IdObj -> ContainerSpec -> Podman -> IO (Either Problem IdObj)
+createContainer :: IdObj -> ContainerSpec -> Podman -> Oz IdObj
 createContainer (IdObj pid) c = podmanApiRequest methodPost "/v3.0.0/libpod/containers/create" (Just j)
   where
     j =
@@ -171,14 +159,14 @@ createContainer (IdObj pid) c = podmanApiRequest methodPost "/v3.0.0/libpod/cont
         ]
 
 -- | Initialise, but do not start, a container.
-initContainer :: IdObj -> Podman -> IO (Either Problem ())
-initContainer (IdObj cid) = fmap void . podmanApiRequest' methodPost uriPath Nothing
+initContainer :: IdObj -> Podman -> Oz ()
+initContainer (IdObj cid) = void . podmanApiRequest' methodPost uriPath Nothing
   where
     uriPath = "/v3.0.0/libpod/containers/" <> unpack cid <> "/init"
 
 -- | Start a container.
-startContainer :: IdObj -> Podman -> IO (Either Problem ())
-startContainer (IdObj cid) = fmap void . podmanApiRequest' methodPost uriPath Nothing
+startContainer :: IdObj -> Podman -> Oz ()
+startContainer (IdObj cid) = void . podmanApiRequest' methodPost uriPath Nothing
   where
     uriPath = "/v3.0.0/libpod/containers/" <> unpack cid <> "/start"
 
@@ -195,13 +183,10 @@ podmanApiRequest ::
   Maybe Value ->
   -- | Podman handle
   Podman ->
-  IO (Either Problem a)
-podmanApiRequest meth uriPath body manager = decodeJson <$> podmanApiRequest' meth uriPath body manager
+  Oz a
+podmanApiRequest meth uriPath body manager = decodeJson =<< podmanApiRequest' meth uriPath body manager
   where
-    decodeJson (Right resp) = case eitherDecode (responseBody resp) of
-      Right a -> Right a
-      Left err -> Left (PodmanJsonError err)
-    decodeJson (Left err) = Left err
+    decodeJson = either (problem . PodmanJsonError) pure . eitherDecode . responseBody
 
 -- | Make a request to the Podman API.
 podmanApiRequest' ::
@@ -213,10 +198,10 @@ podmanApiRequest' ::
   Maybe Value ->
   -- | Podman handle
   Podman ->
-  IO (Either Problem (Response BL.ByteString))
+  Oz (Response BL.ByteString)
 podmanApiRequest' meth uriPath body (Podman manager) = do
-  req <- makeReq <$> parseUrlThrow ("http://127.0.0.1" <> uriPath)
-  (Right <$> httpLbs req manager) `catch` (pure . Left . PodmanHttpError)
+  req <- makeReq <$> liftIO (parseUrlThrow ("http://127.0.0.1" <> uriPath))
+  liftIO (httpLbs req manager) `catch` (problem . PodmanHttpError)
   where
     makeReq req =
       req

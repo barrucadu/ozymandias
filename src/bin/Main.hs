@@ -8,6 +8,7 @@ import Data.Foldable (traverse_)
 import Data.Text (unpack)
 import Options.Applicative
 import Ozymandias.Job
+import Ozymandias.Monad
 import Ozymandias.Podman
 import Ozymandias.Problem
 import System.Exit (die)
@@ -76,7 +77,7 @@ parser =
 
 debugListPods :: Podman -> IsManaged -> IO ()
 debugListPods podman isManaged =
-  getAllPods podman >>= \case
+  runOz (getAllPods podman) >>= \case
     Right allPods ->
       let pods = filter (\p -> podIsManaged p == isManaged) allPods
        in if null pods
@@ -97,7 +98,7 @@ debugCreatePodFromJob podman fp =
   A.eitherDecodeFileStrict fp >>= \case
     Right jobspec -> case normaliseJobSpec jobspec of
       Right njobspec ->
-        createAndLaunchPod podman njobspec >>= \case
+        runOz (createAndLaunchPod podman njobspec) >>= \case
           Right pod -> print pod
           Left err -> die (formatProblem err)
       Left err -> die (formatProblem err)
