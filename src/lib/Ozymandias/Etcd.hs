@@ -20,19 +20,15 @@ import qualified Data.List.NonEmpty as NE
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
-import Network.HTTP.Client
-import Network.HTTP.Types
 import Ozymandias.Job
 import Ozymandias.Monad
 import Ozymandias.Problem
+import Ozymandias.Util
 
 -------------------------------------------------------------------------------
 
 -- | A handle to the etcd API.
-data Etcd = Etcd
-  { etcdReq :: String -> IO Request,
-    etcdManager :: Manager
-  }
+newtype Etcd = Etcd {etcdHandle :: ApiHandle}
 
 -- | Create a new 'Etcd' handle.
 initEtcd ::
@@ -41,7 +37,16 @@ initEtcd ::
   IO Etcd
 initEtcd etcdHost = do
   manager <- newManager defaultManagerSettings
-  pure Etcd {etcdReq = \uriPath -> parseUrlThrow (etcdHost <> uriPath), etcdManager = manager}
+  pure
+    Etcd
+      { etcdHandle =
+          ApiHandle
+            { apiManager = manager,
+              apiMakeRequest = \uriPath -> parseUrlThrow (etcdHost <> uriPath),
+              apiJsonError = EtcdJsonError,
+              apiHttpError = EtcdHttpError
+            }
+      }
 
 -------------------------------------------------------------------------------
 
@@ -50,8 +55,8 @@ newtype EtcdKey = EtcdKey Text
   deriving (Show)
 
 -- | Fetch a 'JobSpec' from etcd.
-fetchJobSpec :: EtcdKey -> Etcd -> Oz JobSpec
-fetchJobSpec key = fmap (kvValue . NE.head) . readKey key
+fetchJobSpec :: Etcd -> EtcdKey -> Oz JobSpec
+fetchJobSpec etcd key = kvValue . NE.head <$> readKey etcd key
 
 -------------------------------------------------------------------------------
 
@@ -82,10 +87,10 @@ instance FromJSON a => FromJSON (KV a) where
       <*> v .: "version"
 
 -- | Fetch the value at a key.
-readKey :: FromJSON a => EtcdKey -> Etcd -> Oz (NonEmpty (KV a))
-readKey (EtcdKey key) etcd = do
+readKey :: FromJSON a => Etcd -> EtcdKey -> Oz (NonEmpty (KV a))
+readKey etcd (EtcdKey key) = do
   let j = object ["key" .= encodeTextAsBase64 key]
-  KVs values <- etcdApiRequest methodPost "/v3alpha/kv/range" (Just j) etcd
+  KVs values <- apiRequest (etcdHandle etcd) methodPost "/v3alpha/kv/range" (Just j)
   maybe (problem (EtcdKeyNotFoundError key)) pure (NE.nonEmpty values)
 
 -------------------------------------------------------------------------------
@@ -101,41 +106,3 @@ decodeTextFromBase64 = decodeUtf8 . B64.decodeLenient . encodeUtf8
 -- | Encode some @Text@ into base64 data.
 encodeTextAsBase64 :: Text -> Text
 encodeTextAsBase64 = decodeUtf8 . B64.encode . encodeUtf8
-
--- | Make a request to the etcd API and decode the response as JSON.
-etcdApiRequest ::
-  FromJSON a =>
-  -- | Request method
-  Method ->
-  -- | Request path
-  String ->
-  -- | JSON request body
-  Maybe Value ->
-  -- | etcd handle
-  Etcd ->
-  Oz a
-etcdApiRequest meth uriPath body manager = decodeJson =<< etcdApiRequest' meth uriPath body manager
-  where
-    decodeJson = either (problem . EtcdJsonError) pure . eitherDecode . responseBody
-
--- | Make a request to the etcd API.
-etcdApiRequest' ::
-  -- | Request method
-  Method ->
-  -- | Request path
-  String ->
-  -- | JSON request body
-  Maybe Value ->
-  -- | etcd handle
-  Etcd ->
-  Oz (Response BL.ByteString)
-etcdApiRequest' meth uriPath body (Etcd toReq manager) = do
-  req <- makeReq <$> liftIO (toReq uriPath)
-  liftIO (httpLbs req manager) `catch` (problem . EtcdHttpError)
-  where
-    makeReq req =
-      req
-        { method = meth,
-          requestHeaders = [(hAccept, "application/json"), (hContentType, "application/json")],
-          requestBody = maybe (requestBody req) (RequestBodyLBS . encode) body
-        }

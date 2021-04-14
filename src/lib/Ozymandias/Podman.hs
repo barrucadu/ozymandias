@@ -19,7 +19,6 @@ where
 
 import Control.Monad (void)
 import Data.Aeson
-import qualified Data.ByteString.Lazy as BL
 import Data.Char (toLower)
 import Data.Foldable (traverse_)
 import qualified Data.HashMap.Strict as M
@@ -27,25 +26,36 @@ import Data.List (intercalate, nub)
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Text (Text, unpack)
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
-import Network.HTTP.Client
-import Network.HTTP.Types
+import Network.HTTP.Client (makeConnection, managerRawConnection)
 import qualified Network.Socket as S
 import qualified Network.Socket.ByteString as SBS
 import Ozymandias.Job
 import Ozymandias.Monad
 import Ozymandias.Problem
+import Ozymandias.Util
 
 -------------------------------------------------------------------------------
 
 -- | A handle to the Podman API.
-newtype Podman = Podman Manager
+newtype Podman = Podman {podmanHandle :: ApiHandle}
 
 -- | Create a new 'Podman' handle.
 initPodman ::
   -- | Path to the Podman UNIX socket file.
   FilePath ->
   IO Podman
-initPodman socketPath = Podman <$> newManager defaultManagerSettings {managerRawConnection = pure openUnixSocket}
+initPodman socketPath = do
+  manager <- newManager defaultManagerSettings {managerRawConnection = pure openUnixSocket}
+  pure
+    Podman
+      { podmanHandle =
+          ApiHandle
+            { apiManager = manager,
+              apiMakeRequest = \uriPath -> parseUrlThrow ("http://127.0.0.1" <> uriPath),
+              apiJsonError = PodmanJsonError,
+              apiHttpError = PodmanHttpError
+            }
+      }
   where
     -- from https://kseo.github.io/posts/2017-01-23-custom-connection-manager-for-http-client.html
     openUnixSocket _ _ _ = do
@@ -87,52 +97,51 @@ data IsManaged = IsNotManaged | IsManaged
 -------------------------------------------------------------------------------
 
 -- | Create a pod and launch containers inside it.
-createAndLaunchPod :: NormalisedJobSpec -> Podman -> Oz IdObj
-createAndLaunchPod njobspec podman = do
+createAndLaunchPod :: Podman -> NormalisedJobSpec -> Oz IdObj
+createAndLaunchPod podman njobspec = do
   pullImages . map containerspecImage . M.elems $ jobspecContainers jobspec
-  pod <- createPod jobspec podman
+  pod <- createPod podman jobspec
   launchContainers pod (normalisedJobSpecToLaunchOrder njobspec)
   pure pod
   where
     jobspec = normalisedJobSpecToJobSpec njobspec
 
     pullImages :: [Text] -> Oz ()
-    pullImages = void . mapConcurrently (`pullImage` podman) . nub
+    pullImages = void . mapConcurrently (pullImage podman) . nub
 
     launchContainers :: IdObj -> [[Text]] -> Oz ()
     launchContainers pod = traverse_ (mapConcurrently go)
       where
         go c = do
           let container = jobspecContainers jobspec M.! c
-          cid <- createContainer pod container podman
-          initContainer cid podman
-          startContainer cid podman
+          cid <- createContainer podman pod container
+          initContainer podman cid
+          startContainer podman cid
 
 -- | Kill and delete a pod and all its containers.
-destroyPod :: IdObj -> Podman -> Oz ()
-destroyPod (IdObj pid) = void . podmanApiRequest' methodDelete uriPath Nothing
+destroyPod :: Podman -> IdObj -> Oz ()
+destroyPod podman (IdObj pid) = apiRequest_ (podmanHandle podman) methodDelete uriPath Nothing
   where
     uriPath = "/v3.0.0/libpod/pods/" <> unpack pid <> "?force=true"
 
 -- | List all pods, managed and unmanaged.
 getAllPods :: Podman -> Oz [Pod]
-getAllPods = podmanApiRequest methodGet "/v3.0.0/libpod/pods/json" Nothing
+getAllPods podman = apiRequest (podmanHandle podman) methodGet "/v3.0.0/libpod/pods/json" Nothing
 
 -------------------------------------------------------------------------------
 
 -- Lower-level podman operations used by the functions above.
 
 -- | Create a pod, but not any of its containers.
-createPod :: JobSpec -> Podman -> Oz IdObj
-createPod jobspec = podmanApiRequest methodPost "/v3.0.0/libpod/pods/create" (Just j)
+createPod :: Podman -> JobSpec -> Oz IdObj
+createPod podman jobspec =
+  apiRequest (podmanHandle podman) methodPost "/v3.0.0/libpod/pods/create" . Just $
+    object
+      [ "name" .= jobspecName jobspec,
+        "labels" .= object ["managed-by-ozymandias" .= ("yes" :: Text)],
+        "portmappings" .= (map portMappingToJson . concat $ mapMaybe containerspecPortMappings (M.elems (jobspecContainers jobspec)))
+      ]
   where
-    j =
-      object
-        [ "name" .= jobspecName jobspec,
-          "labels" .= object ["managed-by-ozymandias" .= ("yes" :: Text)],
-          "portmappings" .= (map portMappingToJson . concat $ mapMaybe containerspecPortMappings (M.elems (jobspecContainers jobspec)))
-        ]
-
     portMappingToJson p =
       object
         [ "host_port" .= portmappingFrom p,
@@ -141,75 +150,34 @@ createPod jobspec = podmanApiRequest methodPost "/v3.0.0/libpod/pods/create" (Ju
         ]
 
 -- | Pull an image from a registry.
-pullImage :: Text -> Podman -> Oz ()
-pullImage image = void . podmanApiRequest' methodPost uriPath Nothing
+pullImage :: Podman -> Text -> Oz ()
+pullImage podman image = apiRequest_ (podmanHandle podman) methodPost uriPath Nothing
   where
     uriPath = unpack . decodeUtf8 $ "/v3.0.0/libpod/images/pull?reference=" <> urlEncode True (encodeUtf8 image)
 
 -- | Create, but do not start, a container.
-createContainer :: IdObj -> ContainerSpec -> Podman -> Oz IdObj
-createContainer (IdObj pid) c = podmanApiRequest methodPost "/v3.0.0/libpod/containers/create" (Just j)
-  where
-    j =
-      object
-        [ "pod" .= pid,
-          "image" .= containerspecImage c,
-          "restart_policy" .= containerspecRestartPolicy c,
-          "restart_tries" .= containerspecRestartTries c,
-          "command" .= containerspecCommand c,
-          "entrypoint" .= containerspecEntrypoint c,
-          "env" .= containerspecEnvironment c,
-          "resource_limits" .= object ["memory" .= object ["limit" .= containerspecMemory c]]
-        ]
+createContainer :: Podman -> IdObj -> ContainerSpec -> Oz IdObj
+createContainer podman (IdObj pid) c =
+  apiRequest (podmanHandle podman) methodPost "/v3.0.0/libpod/containers/create" . Just $
+    object
+      [ "pod" .= pid,
+        "image" .= containerspecImage c,
+        "restart_policy" .= containerspecRestartPolicy c,
+        "restart_tries" .= containerspecRestartTries c,
+        "command" .= containerspecCommand c,
+        "entrypoint" .= containerspecEntrypoint c,
+        "env" .= containerspecEnvironment c,
+        "resource_limits" .= object ["memory" .= object ["limit" .= containerspecMemory c]]
+      ]
 
 -- | Initialise, but do not start, a container.
-initContainer :: IdObj -> Podman -> Oz ()
-initContainer (IdObj cid) = void . podmanApiRequest' methodPost uriPath Nothing
+initContainer :: Podman -> IdObj -> Oz ()
+initContainer podman (IdObj cid) = apiRequest_ (podmanHandle podman) methodPost uriPath Nothing
   where
     uriPath = "/v3.0.0/libpod/containers/" <> unpack cid <> "/init"
 
 -- | Start a container.
-startContainer :: IdObj -> Podman -> Oz ()
-startContainer (IdObj cid) = void . podmanApiRequest' methodPost uriPath Nothing
+startContainer :: Podman -> IdObj -> Oz ()
+startContainer podman (IdObj cid) = apiRequest_ (podmanHandle podman) methodPost uriPath Nothing
   where
     uriPath = "/v3.0.0/libpod/containers/" <> unpack cid <> "/start"
-
--------------------------------------------------------------------------------
-
--- | Make a request to the Podman API and decode the response as JSON.
-podmanApiRequest ::
-  FromJSON a =>
-  -- | Request method
-  Method ->
-  -- | Request path
-  String ->
-  -- | JSON request body
-  Maybe Value ->
-  -- | Podman handle
-  Podman ->
-  Oz a
-podmanApiRequest meth uriPath body manager = decodeJson =<< podmanApiRequest' meth uriPath body manager
-  where
-    decodeJson = either (problem . PodmanJsonError) pure . eitherDecode . responseBody
-
--- | Make a request to the Podman API.
-podmanApiRequest' ::
-  -- | Request method
-  Method ->
-  -- | Request path
-  String ->
-  -- | JSON request body
-  Maybe Value ->
-  -- | Podman handle
-  Podman ->
-  Oz (Response BL.ByteString)
-podmanApiRequest' meth uriPath body (Podman manager) = do
-  req <- makeReq <$> liftIO (parseUrlThrow ("http://127.0.0.1" <> uriPath))
-  liftIO (httpLbs req manager) `catch` (problem . PodmanHttpError)
-  where
-    makeReq req =
-      req
-        { method = meth,
-          requestHeaders = [(hAccept, "application/json"), (hContentType, "application/json")],
-          requestBody = maybe (requestBody req) (RequestBodyLBS . encode) body
-        }

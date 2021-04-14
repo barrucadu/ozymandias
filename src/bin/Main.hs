@@ -108,21 +108,21 @@ debugCreatePodFromFile podman fp =
 
 debugCreatePodFromEtcd :: Etcd -> Podman -> String -> IO ()
 debugCreatePodFromEtcd etcd podman key =
-  runOz (fetchJobSpec (EtcdKey (pack key)) etcd) >>= \case
+  runOz (fetchJobSpec etcd (EtcdKey (pack key))) >>= \case
     Right jobspec -> debugCreatePod podman jobspec
     Left err -> die (formatProblem err)
 
 debugCreatePod :: Podman -> JobSpec -> IO ()
 debugCreatePod podman jobspec = case normaliseJobSpec jobspec of
   Right njobspec ->
-    runOz (createAndLaunchPod njobspec podman) >>= \case
+    runOz (createAndLaunchPod podman njobspec) >>= \case
       Right pod -> print pod
       Left err -> die (formatProblem err)
   Left err -> die (formatProblem err)
 
 debugDestroyPod :: Podman -> String -> IO ()
 debugDestroyPod podman pid =
-  runOz (destroyPod (IdObj (pack pid)) podman) >>= \case
+  runOz (destroyPod podman (IdObj (pack pid))) >>= \case
     Right () -> putStrLn ("Pod " <> pid <> " destroyed.")
     Left err -> die (formatProblem err)
 
