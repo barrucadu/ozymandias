@@ -102,4 +102,4 @@ toProblemDocument (PodDependencyError solved unsolved) =
 
 -- | Base URL for problem type help text
 problemTypeBaseURL :: Text
-problemTypeBaseURL = "https://github.com/barrucadu/ozymandias/master/docs/errors.markdown"
+problemTypeBaseURL = "https://github.com/barrucadu/ozymandias/blob/master/docs/errors.markdown"
