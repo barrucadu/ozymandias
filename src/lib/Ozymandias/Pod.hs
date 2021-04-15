@@ -1,18 +1,18 @@
 {-# LANGUAGE DeriveGeneric #-}
 
-module Ozymandias.Job
-  ( -- * Job specifications
-    JobSpec (..),
+module Ozymandias.Pod
+  ( -- * Pod specifications
+    PodSpec (..),
     ContainerSpec (..),
     PortMappingSpec (..),
     RestartPolicySpec (..),
     PortProtocolSpec (..),
 
-    -- * Normalised job specifications
-    NormalisedJobSpec,
-    normalisedJobSpecToJobSpec,
-    normalisedJobSpecToLaunchOrder,
-    normaliseJobSpec,
+    -- * Normalised pod specifications
+    NormalisedPodSpec,
+    normalisedPodSpecToPodSpec,
+    normalisedPodSpecToLaunchOrder,
+    normalisePodSpec,
   )
 where
 
@@ -27,25 +27,23 @@ import GHC.Generics
 import Numeric.Natural (Natural)
 import Ozymandias.Problem
 
--- | A specification of a job to run.
-data JobSpec = JobSpec
-  { -- | The name of the job, to use for DNS.  Must be globally
+-- | A specification of a pod to run.
+data PodSpec = PodSpec
+  { -- | The name of the pod, to use for DNS.  Must be globally
     -- unique, and valid as a hostname.
-    jobspecName :: Text,
-    -- | Number of instances to run.
-    jobspecNumInstances :: Natural,
+    podspecName :: Text,
     -- | Container definitions.  These are run as a single \"pod\",
     -- bound to the same network interface.
-    jobspecContainers :: M.HashMap Text ContainerSpec
+    podspecContainers :: M.HashMap Text ContainerSpec
   }
   deriving (Generic, Show)
 
-instance ToJSON JobSpec where
-  toJSON = genericToJSON (jsonOptions "jobspec")
-  toEncoding = genericToEncoding (jsonOptions "jobspec")
+instance ToJSON PodSpec where
+  toJSON = genericToJSON (jsonOptions "podspec")
+  toEncoding = genericToEncoding (jsonOptions "podspec")
 
-instance FromJSON JobSpec where
-  parseJSON = genericParseJSON (jsonOptions "jobspec")
+instance FromJSON PodSpec where
+  parseJSON = genericParseJSON (jsonOptions "podspec")
 
 -- | A specification of a container to run.
 data ContainerSpec = ContainerSpec
@@ -119,38 +117,38 @@ instance FromJSON PortProtocolSpec where
 
 -------------------------------------------------------------------------------
 
--- | A normalised @JobSpec@ has had all the @containerspecDepends@
+-- | A normalised @PodSpec@ has had all the @containerspecDepends@
 -- validated: all dependencies are in the pod, and there is an order
 -- to launch the containers which meets all of the dependencies.
-data NormalisedJobSpec = NormalisedJobSpec
-  { normalisedJobSpec :: JobSpec,
+data NormalisedPodSpec = NormalisedPodSpec
+  { normalisedPodSpec :: PodSpec,
     normalisedContainerLaunchOrder :: [[Text]]
   }
   deriving (Show)
 
--- | Get the @JobSpec@ from a @NormalisedJobSpec@.
-normalisedJobSpecToJobSpec :: NormalisedJobSpec -> JobSpec
-normalisedJobSpecToJobSpec = normalisedJobSpec
+-- | Get the @PodSpec@ from a @NormalisedPodSpec@.
+normalisedPodSpecToPodSpec :: NormalisedPodSpec -> PodSpec
+normalisedPodSpecToPodSpec = normalisedPodSpec
 
--- | Get the launch order from a @NormalisedJobSpec@.
-normalisedJobSpecToLaunchOrder :: NormalisedJobSpec -> [[Text]]
-normalisedJobSpecToLaunchOrder = normalisedContainerLaunchOrder
+-- | Get the launch order from a @NormalisedPodSpec@.
+normalisedPodSpecToLaunchOrder :: NormalisedPodSpec -> [[Text]]
+normalisedPodSpecToLaunchOrder = normalisedContainerLaunchOrder
 
--- | Validate the @containerspecDepends@ of a @JobSpec@ and compute a
+-- | Validate the @containerspecDepends@ of a @PodSpec@ and compute a
 -- container launch order.
-normaliseJobSpec :: JobSpec -> Either Problem NormalisedJobSpec
-normaliseJobSpec jobspec = go [] . sortOn (length . deps) . M.toList $ jobspecContainers jobspec
+normalisePodSpec :: PodSpec -> Either Problem NormalisedPodSpec
+normalisePodSpec podspec = go [] . sortOn (length . deps) . M.toList $ podspecContainers podspec
   where
     go launcho [] =
       Right
-        NormalisedJobSpec
-          { normalisedJobSpec = jobspec,
+        NormalisedPodSpec
+          { normalisedPodSpec = podspec,
             normalisedContainerLaunchOrder = reverse launcho
           }
     go launcho todo =
       let (launcho', todo') = partition (all (\d -> any (d `elem`) launcho) . deps) todo
        in if null launcho'
-            then Left (JobDependencyError (reverse launcho) (map fst todo))
+            then Left (PodDependencyError (reverse launcho) (map fst todo))
             else go (map fst launcho' : launcho) todo'
 
     deps = fromMaybe [] . containerspecDepends . snd

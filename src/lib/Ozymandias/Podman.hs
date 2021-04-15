@@ -29,8 +29,8 @@ import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import Network.HTTP.Client (makeConnection, managerRawConnection)
 import qualified Network.Socket as S
 import qualified Network.Socket.ByteString as SBS
-import Ozymandias.Job
 import Ozymandias.Monad
+import Ozymandias.Pod
 import Ozymandias.Problem
 import Ozymandias.Util
 
@@ -97,14 +97,14 @@ data IsManaged = IsNotManaged | IsManaged
 -------------------------------------------------------------------------------
 
 -- | Create a pod and launch containers inside it.
-createAndLaunchPod :: Podman -> NormalisedJobSpec -> Oz IdObj
-createAndLaunchPod podman njobspec = do
-  pullImages . map containerspecImage . M.elems $ jobspecContainers jobspec
-  pod <- createPod podman jobspec
-  launchContainers pod (normalisedJobSpecToLaunchOrder njobspec)
+createAndLaunchPod :: Podman -> NormalisedPodSpec -> Oz IdObj
+createAndLaunchPod podman npodspec = do
+  pullImages . map containerspecImage . M.elems $ podspecContainers podspec
+  pod <- createPod podman podspec
+  launchContainers pod (normalisedPodSpecToLaunchOrder npodspec)
   pure pod
   where
-    jobspec = normalisedJobSpecToJobSpec njobspec
+    podspec = normalisedPodSpecToPodSpec npodspec
 
     pullImages :: [Text] -> Oz ()
     pullImages = void . mapConcurrently (pullImage podman) . nub
@@ -113,7 +113,7 @@ createAndLaunchPod podman njobspec = do
     launchContainers pod = traverse_ (mapConcurrently go)
       where
         go c = do
-          let container = jobspecContainers jobspec M.! c
+          let container = podspecContainers podspec M.! c
           cid <- createContainer podman pod container
           initContainer podman cid
           startContainer podman cid
@@ -133,13 +133,13 @@ getAllPods podman = apiRequest (podmanHandle podman) methodGet "/v3.0.0/libpod/p
 -- Lower-level podman operations used by the functions above.
 
 -- | Create a pod, but not any of its containers.
-createPod :: Podman -> JobSpec -> Oz IdObj
-createPod podman jobspec =
+createPod :: Podman -> PodSpec -> Oz IdObj
+createPod podman podspec =
   apiRequest (podmanHandle podman) methodPost "/v3.0.0/libpod/pods/create" . Just $
     object
-      [ "name" .= jobspecName jobspec,
+      [ "name" .= podspecName podspec,
         "labels" .= object ["managed-by-ozymandias" .= ("yes" :: Text)],
-        "portmappings" .= (map portMappingToJson . concat $ mapMaybe containerspecPortMappings (M.elems (jobspecContainers jobspec)))
+        "portmappings" .= (map portMappingToJson . concat $ mapMaybe containerspecPortMappings (M.elems (podspecContainers podspec)))
       ]
   where
     portMappingToJson p =

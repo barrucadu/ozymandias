@@ -13,7 +13,7 @@ data Problem
   | EtcdKeyNotFoundError Text
   | PodmanJsonError String
   | PodmanHttpError HTTP.HttpException
-  | JobDependencyError [[Text]] [Text]
+  | PodDependencyError [[Text]] [Text]
   deriving (Show)
 
 instance ToJSON Problem where
@@ -92,10 +92,10 @@ toProblemDocument (PodmanHttpError (HTTP.InvalidUrlException url err)) =
       problemDetail = pack err,
       problemExtraDetails = [("url", pack url)]
     }
-toProblemDocument (JobDependencyError solved unsolved) =
+toProblemDocument (PodDependencyError solved unsolved) =
   ProblemDocument
-    { problemType = problemTypeBaseURL <> "#job-has-unsatisfiable-dependencies",
-      problemTitle = "Job has unsatisfiable dependencies",
+    { problemType = problemTypeBaseURL <> "#pod-has-unsatisfiable-dependencies",
+      problemTitle = "Pod has unsatisfiable dependencies",
       problemDetail = "Could not compute a launch order for containers: " <> intercalate ", " unsolved,
       problemExtraDetails = [("launch_order", intercalate "; " (map (intercalate ", ") solved))]
     }

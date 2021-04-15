@@ -8,8 +8,8 @@ import Data.Foldable (traverse_)
 import Data.Text (pack, unpack)
 import Options.Applicative
 import Ozymandias.Etcd
-import Ozymandias.Job
 import Ozymandias.Monad
+import Ozymandias.Pod
 import Ozymandias.Podman
 import Ozymandias.Problem
 import System.Exit (die)
@@ -22,7 +22,7 @@ main = do
   case argsCommand args of
     DebugArgs ListManagedPods -> debugListPods podman IsManaged
     DebugArgs ListUnmanagedPods -> debugListPods podman IsNotManaged
-    DebugArgs (ParseJobDefinition fp) -> debugParseJobDefinition fp
+    DebugArgs (ParsePodDefinition fp) -> debugParsePodDefinition fp
     DebugArgs (CreatePodFromFile fp) -> debugCreatePodFromFile podman fp
     DebugArgs (CreatePodFromEtcd key) -> debugCreatePodFromEtcd etcd podman key
     DebugArgs (DestroyPod pid) -> debugDestroyPod podman pid
@@ -50,7 +50,7 @@ newtype CommandArgs = DebugArgs DebugArgs
 data DebugArgs
   = ListManagedPods
   | ListUnmanagedPods
-  | ParseJobDefinition FilePath
+  | ParsePodDefinition FilePath
   | CreatePodFromFile FilePath
   | CreatePodFromEtcd String
   | DestroyPod String
@@ -70,9 +70,9 @@ parser =
         <$> commands
           [ ("list-managed-pods", "List running pods managed by the cluster", pure ListManagedPods),
             ("list-unmanaged-pods", "List running pods not managed by the cluster", pure ListUnmanagedPods),
-            ("parse-job-definition", "Read and dump a job configuration file", ParseJobDefinition <$> opt 'f' "config-file" "FILE" "Path to job configuration file"),
-            ("create-pod-from-file", "Create a pod from a job configuration file", CreatePodFromFile <$> opt 'f' "config-file" "FILE" "Path to job configuration file"),
-            ("create-pod-from-etcd", "Create a pod from a job configuration in etcd", CreatePodFromEtcd <$> opt 'k' "key" "KEY" "Key to read job configuration from"),
+            ("parse-pod-definition", "Read and dump a pod configuration file", ParsePodDefinition <$> opt 'f' "config-file" "FILE" "Path to pod configuration file"),
+            ("create-pod-from-file", "Create a pod from a configuration file", CreatePodFromFile <$> opt 'f' "config-file" "FILE" "Path to pod configuration file"),
+            ("create-pod-from-etcd", "Create a pod from configuration in etcd", CreatePodFromEtcd <$> opt 'k' "key" "KEY" "Key to read pod configuration from"),
             ("destroy-pod", "Kill and delete a running pod", DestroyPod <$> opt 'p' "pod" "POD" "Identifier of the pod")
           ]
 
@@ -92,30 +92,30 @@ debugListPods podman isManaged =
             else traverse_ print pods
     Left err -> die (formatProblem err)
 
-debugParseJobDefinition :: FilePath -> IO ()
-debugParseJobDefinition fp =
+debugParsePodDefinition :: FilePath -> IO ()
+debugParsePodDefinition fp =
   A.eitherDecodeFileStrict fp >>= \case
-    Right jobspec -> case normaliseJobSpec jobspec of
-      Right njobspec -> print njobspec
+    Right podspec -> case normalisePodSpec podspec of
+      Right npodspec -> print npodspec
       Left err -> die (formatProblem err)
     Left err -> die (formatError "Could not parse JSON" err)
 
 debugCreatePodFromFile :: Podman -> FilePath -> IO ()
 debugCreatePodFromFile podman fp =
   A.eitherDecodeFileStrict fp >>= \case
-    Right jobspec -> debugCreatePod podman jobspec
+    Right podspec -> debugCreatePod podman podspec
     Left err -> die (formatError "Could not parse JSON" err)
 
 debugCreatePodFromEtcd :: Etcd -> Podman -> String -> IO ()
 debugCreatePodFromEtcd etcd podman key =
-  runOz (fetchJobSpec etcd (EtcdKey (pack key))) >>= \case
-    Right jobspec -> debugCreatePod podman jobspec
+  runOz (fetchPodSpec etcd (EtcdKey (pack key))) >>= \case
+    Right podspec -> debugCreatePod podman podspec
     Left err -> die (formatProblem err)
 
-debugCreatePod :: Podman -> JobSpec -> IO ()
-debugCreatePod podman jobspec = case normaliseJobSpec jobspec of
-  Right njobspec ->
-    runOz (createAndLaunchPod podman njobspec) >>= \case
+debugCreatePod :: Podman -> PodSpec -> IO ()
+debugCreatePod podman podspec = case normalisePodSpec podspec of
+  Right npodspec ->
+    runOz (createAndLaunchPod podman npodspec) >>= \case
       Right pod -> print pod
       Left err -> die (formatProblem err)
   Left err -> die (formatProblem err)

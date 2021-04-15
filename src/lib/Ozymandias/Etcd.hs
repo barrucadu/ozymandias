@@ -7,7 +7,7 @@ module Ozymandias.Etcd
 
     -- * Interacting with etcd
     EtcdKey (..),
-    fetchJobSpec,
+    fetchPodSpec,
   )
 where
 
@@ -20,8 +20,8 @@ import qualified Data.List.NonEmpty as NE
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
-import Ozymandias.Job
 import Ozymandias.Monad
+import Ozymandias.Pod
 import Ozymandias.Problem
 import Ozymandias.Util
 
@@ -54,9 +54,9 @@ initEtcd etcdHost = do
 newtype EtcdKey = EtcdKey Text
   deriving (Show)
 
--- | Fetch a 'JobSpec' from etcd.
-fetchJobSpec :: Etcd -> EtcdKey -> Oz JobSpec
-fetchJobSpec etcd key = kvValue . NE.head <$> readKey etcd key
+-- | Fetch a 'PodSpec' from etcd.
+fetchPodSpec :: Etcd -> EtcdKey -> Oz PodSpec
+fetchPodSpec etcd key = kvValue . NE.head <$> readKey etcd key
 
 -------------------------------------------------------------------------------
 

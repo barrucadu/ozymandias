@@ -10,7 +10,7 @@ maintainer:         mike@barrucadu.co.uk
 
 library
     exposed-modules:  Ozymandias.Etcd
-                    , Ozymandias.Job
+                    , Ozymandias.Pod
                     , Ozymandias.Monad
                     , Ozymandias.Podman
                     , Ozymandias.Problem
